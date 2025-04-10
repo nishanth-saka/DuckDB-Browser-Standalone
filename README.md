@@ -1,0 +1,1 @@
+# DuckDB-In-Browser-GUI
