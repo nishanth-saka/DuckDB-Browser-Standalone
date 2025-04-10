@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>DuckDB Web GUI</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        display: flex;
+        padding: 1rem;
+        gap: 2rem;
+      }
+      #leftPanel {
+        width: 300px;
+        border-right: 1px solid #ddd;
+        padding-right: 1rem;
+      }
+      #mainPanel {
+        flex: 1;
+      }
+      #editor {
+        height: 150px;
+        border: 1px solid #ccc;
+      }
+      .table-scroll {
+        overflow-x: auto;
+        margin-top: 1rem;
+      }
+      table {
+        width: max-content;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        border: 1px solid #ccc;
+        padding: 0.5rem;
+        text-align: left;
+        white-space: nowrap;
+      }
+      thead th {
+        position: sticky;
+        top: 0;
+        background: #f3f3f3;
+        z-index: 1;
+      }
+      .table-item {
+        cursor: pointer;
+        margin-bottom: 0.3rem;
+      }
+      .table-item:hover {
+        text-decoration: underline;
+        color: blue;
+      }
+      .schema-details {
+        font-size: 0.9em;
+        margin-left: 1rem;
+        color: #555;
+      }
+      button {
+        padding: 0.3rem 0.6rem;
+        margin: 0 0.2rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="leftPanel">
+      <h3>Schema Explorer</h3>
+      <ul id="tablesList">
+        No tables loaded.
+      </ul>
+    </div>
+
+    <div id="mainPanel">
+      <h2>DuckDB In-Browser GUI</h2>
+      <input type="file" id="csvInput" accept=".csv" />
+      <p><strong>Query:</strong></p>
+      <div id="editor"></div>
+      <button id="runBtn">Run Query</button>
+      <div id="output">No data yet.</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
+    <script type="module">
+      import * as duckdbduckdbWasm from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.28.1-dev106.0/+esm";
+      window.duckdbduckdbWasm = duckdbduckdbWasm;
+
+      const csvInput = document.getElementById("csvInput");
+      const runBtn = document.getElementById("runBtn");
+      const output = document.getElementById("output");
+      const tablesList = document.getElementById("tablesList");
+      let editor, conn;
+      let currentSchema = { tables: {}, keywords: [] };
+
+      const keywords = [
+        "SELECT",
+        "FROM",
+        "WHERE",
+        "GROUP BY",
+        "ORDER BY",
+        "INSERT INTO",
+        "VALUES",
+        "UPDATE",
+        "SET",
+        "DELETE",
+        "CREATE TABLE",
+        "DROP TABLE",
+        "ALTER TABLE",
+        "JOIN",
+        "LEFT JOIN",
+        "RIGHT JOIN",
+        "ON",
+        "AS",
+        "DISTINCT",
+        "LIMIT",
+        "OFFSET",
+        "AND",
+        "OR",
+        "IN",
+        "NOT",
+        "NULL",
+      ];
+
+      const getDb = async () => {
+        const duckdb = duckdbduckdbWasm;
+        if (window._db) return window._db;
+        const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
+        const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
+        const worker_url = URL.createObjectURL(
+          new Blob([`importScripts("${bundle.mainWorker}");`], {
+            type: "text/javascript",
+          })
+        );
+        const worker = new Worker(worker_url);
+        const logger = new duckdb.ConsoleLogger();
+        const db = new duckdb.AsyncDuckDB(logger, worker);
+        await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+        URL.revokeObjectURL(worker_url);
+        window._db = db;
+        return db;
+      };
+
+      async function updateSchemaCache() {
+        currentSchema = { tables: {}, keywords };
+        const result = await conn.query("SHOW TABLES;");
+        const tables = result.toArray().map((r) => r.name);
+        for (const table of tables) {
+          const info = await conn.query(`PRAGMA table_info('${table}');`);
+          currentSchema.tables[table] = info.toArray().map((f) => f.name);
+        }
+        monaco.languages.registerCompletionItemProvider("sql", {
+          provideCompletionItems: () => {
+            const suggestions = [];
+            keywords.forEach((k) =>
+              suggestions.push({
+                label: k,
+                kind: monaco.languages.CompletionItemKind.Keyword,
+                insertText: k,
+              })
+            );
+            for (const table in currentSchema.tables) {
+              suggestions.push({
+                label: table,
+                kind: monaco.languages.CompletionItemKind.Struct,
+                insertText: table,
+              });
+              currentSchema.tables[table].forEach((col) => {
+                suggestions.push({
+                  label: col,
+                  kind: monaco.languages.CompletionItemKind.Field,
+                  insertText: col,
+                });
+              });
+            }
+            return { suggestions };
+          },
+        });
+      }
+
+      async function refreshTables() {
+        const result = await conn.query("SHOW TABLES;");
+        const tables = result.toArray().map((r) => r.name);
+        tablesList.innerHTML = "";
+        for (const table of tables) {
+          const li = document.createElement("li");
+          li.classList.add("table-item");
+          li.textContent = table;
+          li.addEventListener("click", async () => {
+            const schema = await conn.query(`PRAGMA table_info('${table}');`);
+            const fields = schema.toArray();
+            const cols = fields
+              .map((f) => `${f.name} (${f.type})`)
+              .join("<br>");
+            li.innerHTML = `<strong>${table}</strong><div class="schema-details">${cols}</div>`;
+            editor.setValue(`SELECT * FROM ${table} LIMIT 100;`);
+          });
+          tablesList.appendChild(li);
+        }
+      }
+
+      csvInput.addEventListener("change", async (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        const db = await getDb();
+        conn = await db.connect();
+        const buffer = await file.arrayBuffer();
+        const uint8Array = new Uint8Array(buffer);
+        await db.registerFileBuffer(file.name, uint8Array);
+        const tableName = file.name
+          .replace(/[^a-zA-Z0-9_]/g, "_")
+          .replace(/_csv$/, "");
+        await conn.query(
+          `CREATE OR REPLACE TABLE ${tableName} AS SELECT * FROM read_csv_auto('${file.name}', AUTO_DETECT=TRUE, HEADER=TRUE);`
+        );
+        output.innerHTML = `<p><strong>Loaded:</strong> ${file.name}</p><p>Table created: <code>${tableName}</code></p>`;
+        await updateSchemaCache();
+        refreshTables();
+      });
+
+      runBtn.addEventListener("click", async () => {
+        const query = editor.getValue();
+        if (!conn || !query) return;
+        try {
+          const result = await conn.query(query);
+          renderTable(
+            result.toArray(),
+            result.schema.fields.map((f) => f.name)
+          );
+          await updateSchemaCache();
+          refreshTables();
+        } catch (err) {
+          output.innerHTML = `<p style="color:red;">Error: ${err.message}</p>`;
+        }
+      });
+
+      let currentPage = 1;
+      const rowsPerPage = 10;
+      let fullData = [],
+        fullColumns = [];
+
+      function renderTable(rows, columns) {
+        fullData = rows;
+        fullColumns = columns;
+        currentPage = 1;
+        renderPaginatedTable();
+      }
+
+      function renderPaginatedTable() {
+        const startIdx = (currentPage - 1) * rowsPerPage;
+        const pagedRows = fullData.slice(startIdx, startIdx + rowsPerPage);
+
+        let html = "<table><thead><tr>";
+        for (const col of fullColumns) html += `<th>${col}</th>`;
+        html += "</tr></thead><tbody>";
+
+        for (const row of pagedRows) {
+          html += "<tr>";
+          for (const col of fullColumns) {
+            const val = row[col];
+            html += `<td>${val}</td>`;
+          }
+          html += "</tr>";
+        }
+
+        if (fullData.length > 1) {
+          const totals = {};
+          for (const col of fullColumns) {
+            let total = 0;
+            for (const row of fullData) {
+              const val = row[col];
+              const intVal = parseFloat(val);
+              if (!isNaN(intVal)) total += intVal;
+            }
+            totals[col] = total;
+          }
+
+          html +=
+            "<tr style='font-weight:bold; background:#f9f9f9'><td>Total</td>";
+          for (let i = 1; i < fullColumns.length; i++) {
+            const col = fullColumns[i];
+            const total = totals[col];
+            html += `<td>${total !== 0 ? total : ""}</td>`;
+          }
+          html += "</tr>";
+        }
+
+        html += "</tbody></table>";
+        html += getPaginationControls();
+        output.innerHTML = `<div class="table-scroll">${html}</div>`;
+      }
+
+      function getPaginationControls() {
+        const totalPages = Math.ceil(fullData.length / rowsPerPage);
+        if (totalPages <= 1) return "";
+
+        let controls = `<div style="margin-top:10px;">`;
+        controls += `<button onclick="prevPage()" ${
+          currentPage === 1 ? "disabled" : ""
+        }>Prev</button> `;
+        controls += `Page ${currentPage} of ${totalPages} `;
+        controls += `<button onclick="nextPage()" ${
+          currentPage === totalPages ? "disabled" : ""
+        }>Next</button>`;
+        controls += `</div>`;
+        return controls;
+      }
+
+      window.prevPage = () => {
+        if (currentPage > 1) {
+          currentPage--;
+          renderPaginatedTable();
+        }
+      };
+
+      window.nextPage = () => {
+        const totalPages = Math.ceil(fullData.length / rowsPerPage);
+        if (currentPage < totalPages) {
+          currentPage++;
+          renderPaginatedTable();
+        }
+      };
+
+      require.config({
+        paths: {
+          vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs",
+        },
+      });
+      require(["vs/editor/editor.main"], function () {
+        editor = monaco.editor.create(document.getElementById("editor"), {
+          value: "SELECT * FROM my_table;",
+          language: "sql",
+          theme: "vs-light",
+          automaticLayout: true,
+        });
+      });
+    </script>
+  </body>
+</html>
