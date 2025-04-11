@@ -187,6 +187,7 @@
         const result = await conn.query("SHOW TABLES;");
         const tables = result.toArray().map((r) => r.name);
         tablesList.innerHTML = "";
+        await updateSchemaCache();
         for (const table of tables) {
           const li = document.createElement("li");
           li.classList.add("table-item");
