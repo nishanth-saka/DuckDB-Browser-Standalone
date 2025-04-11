@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>DuckDB Web GUI</title>
+    <title>Duckly - LOCAL</title>
     <style>
       body {
         font-family: sans-serif;
@@ -21,6 +21,12 @@
       #editor {
         height: 150px;
         border: 1px solid #ccc;
+        margin-bottom: 0.5rem;
+      }
+      #notesEditor {
+        height: 450px;
+        border: 1px solid #ccc;
+        margin-bottom: 0.5rem;
       }
       .table-scroll {
         overflow-x: auto;
@@ -55,10 +61,11 @@
         font-size: 0.9em;
         margin-left: 1rem;
         color: #555;
+        display: none;
       }
       button {
         padding: 0.3rem 0.6rem;
-        margin: 0 0.2rem;
+        margin: 0.2rem 0;
       }
     </style>
   </head>
@@ -68,11 +75,14 @@
       <ul id="tablesList">
         No tables loaded.
       </ul>
+      <h3 style="margin-top: 2rem">Notes</h3>
+      <div id="notesEditor"></div>
+      <button id="clearNotesBtn">Clear Notes</button>
     </div>
 
     <div id="mainPanel">
-      <h2>DuckDB In-Browser GUI</h2>
-      <input type="file" id="csvInput" accept=".csv" />
+      <h2>Duckly Local</h2>
+      <input type="file" id="csvInput" accept=".csv" multiple />
       <p><strong>Query:</strong></p>
       <div id="editor"></div>
       <button id="runBtn">Run Query</button>
@@ -88,7 +98,7 @@
       const runBtn = document.getElementById("runBtn");
       const output = document.getElementById("output");
       const tablesList = document.getElementById("tablesList");
-      let editor, conn;
+      let editor, notesEditor, conn;
       let currentSchema = { tables: {}, keywords: [] };
 
       const keywords = [
@@ -149,14 +159,11 @@
         }
         monaco.languages.registerCompletionItemProvider("sql", {
           provideCompletionItems: () => {
-            const suggestions = [];
-            keywords.forEach((k) =>
-              suggestions.push({
-                label: k,
-                kind: monaco.languages.CompletionItemKind.Keyword,
-                insertText: k,
-              })
-            );
+            const suggestions = keywords.map((k) => ({
+              label: k,
+              kind: monaco.languages.CompletionItemKind.Keyword,
+              insertText: k,
+            }));
             for (const table in currentSchema.tables) {
               suggestions.push({
                 label: table,
@@ -184,34 +191,81 @@
           const li = document.createElement("li");
           li.classList.add("table-item");
           li.textContent = table;
+          // li.addEventListener("click", async () => {
+          //   const schema = await conn.query(`PRAGMA table_info('${table}');`);
+          //   const fields = schema.toArray();
+          //   const cols = fields.map((f) => `${f.name} (${f.type})`).join("<br>");
+          //   li.innerHTML = `<strong>${table}</strong><div class="schema-details">${cols}</div>`;
+          //   const sqlSnippet = `SELECT * FROM ${table} LIMIT 100;`;
+          //   try {
+          //     await navigator.clipboard.writeText(sqlSnippet);
+          //     li.innerHTML += `<div class="schema-details" style="color: green;">Copied to clipboard</div>`;
+          //     setTimeout(() => {
+          //       li.querySelectorAll(".schema-details")[1]?.remove();
+          //     }, 1500);
+          //   } catch (err) {
+          //     alert("Failed to copy SQL snippet.");
+          //   }
+          // });
+
           li.addEventListener("click", async () => {
+            const existingDetails = li.querySelector(".schema-details");
+            if (existingDetails) {
+              existingDetails.style.display =
+                existingDetails.style.display === "none" ? "block" : "none";
+              return;
+            }
+
             const schema = await conn.query(`PRAGMA table_info('${table}');`);
             const fields = schema.toArray();
             const cols = fields
               .map((f) => `${f.name} (${f.type})`)
               .join("<br>");
-            li.innerHTML = `<strong>${table}</strong><div class="schema-details">${cols}</div>`;
-            editor.setValue(`SELECT * FROM ${table} LIMIT 100;`);
+
+            const detailsDiv = document.createElement("div");
+            detailsDiv.className = "schema-details";
+            detailsDiv.innerHTML = cols;
+            li.appendChild(detailsDiv);
+
+            // Add copy-to-clipboard snippet
+            const sqlSnippet = `SELECT * FROM ${table} LIMIT 100;`;
+            try {
+              await navigator.clipboard.writeText(sqlSnippet);
+              const copyDiv = document.createElement("div");
+              copyDiv.className = "schema-details";
+              copyDiv.style.color = "green";
+              copyDiv.innerText = "Copied SQL: SELECT * FROM table";
+              li.appendChild(copyDiv);
+              setTimeout(() => copyDiv.remove(), 1500);
+            } catch (err) {
+              console.warn("Clipboard write failed:", err);
+            }
           });
+
           tablesList.appendChild(li);
         }
       }
 
       csvInput.addEventListener("change", async (event) => {
-        const file = event.target.files[0];
-        if (!file) return;
+        const files = event.target.files;
+        if (!files.length) return;
+
         const db = await getDb();
         conn = await db.connect();
-        const buffer = await file.arrayBuffer();
-        const uint8Array = new Uint8Array(buffer);
-        await db.registerFileBuffer(file.name, uint8Array);
-        const tableName = file.name
-          .replace(/[^a-zA-Z0-9_]/g, "_")
-          .replace(/_csv$/, "");
-        await conn.query(
-          `CREATE OR REPLACE TABLE ${tableName} AS SELECT * FROM read_csv_auto('${file.name}', AUTO_DETECT=TRUE, HEADER=TRUE);`
-        );
-        output.innerHTML = `<p><strong>Loaded:</strong> ${file.name}</p><p>Table created: <code>${tableName}</code></p>`;
+        output.innerHTML = "";
+
+        for (const file of files) {
+          const buffer = await file.arrayBuffer();
+          await db.registerFileBuffer(file.name, new Uint8Array(buffer));
+          const tableName = file.name
+            .replace(/[^a-zA-Z0-9_]/g, "_")
+            .replace(/_csv$/, "");
+          await conn.query(
+            `CREATE OR REPLACE TABLE ${tableName} AS SELECT * FROM read_csv_auto('${file.name}', AUTO_DETECT=TRUE, HEADER=TRUE);`
+          );
+          output.innerHTML += `<p><strong>Loaded:</strong> ${file.name}</p><p>Table created: <code>${tableName}</code></p>`;
+        }
+
         await updateSchemaCache();
         refreshTables();
       });
@@ -221,16 +275,23 @@
         if (!conn || !query) return;
         try {
           const result = await conn.query(query);
-          renderTable(
-            result.toArray(),
-            result.schema.fields.map((f) => f.name)
-          );
+          const data = result.toArray();
+          const cols = result.schema.fields.map((f) => f.name);
+          renderTable(data, cols);
+          appendQueryToNotes(query);
           await updateSchemaCache();
           refreshTables();
         } catch (err) {
           output.innerHTML = `<p style="color:red;">Error: ${err.message}</p>`;
         }
       });
+
+      function appendQueryToNotes(query) {
+        let noteContent = notesEditor.getValue();
+        noteContent += `\n\n-- Query Executed --\n${query.trim()}\n`;
+        notesEditor.setValue(noteContent);
+        localStorage.setItem("duckdb_notes", noteContent);
+      }
 
       let currentPage = 1;
       const rowsPerPage = 10;
@@ -255,8 +316,7 @@
         for (const row of pagedRows) {
           html += "<tr>";
           for (const col of fullColumns) {
-            const val = row[col];
-            html += `<td>${val}</td>`;
+            html += `<td>${row[col] ?? ""}</td>`;
           }
           html += "</tr>";
         }
@@ -264,20 +324,16 @@
         if (fullData.length > 1) {
           const totals = {};
           for (const col of fullColumns) {
-            let total = 0;
-            for (const row of fullData) {
-              const val = row[col];
-              const intVal = parseFloat(val);
-              if (!isNaN(intVal)) total += intVal;
-            }
-            totals[col] = total;
+            totals[col] = fullData.reduce((sum, row) => {
+              const val = parseFloat(row[col]);
+              return !isNaN(val) ? sum + val : sum;
+            }, 0);
           }
 
           html +=
             "<tr style='font-weight:bold; background:#f9f9f9'><td>Total</td>";
           for (let i = 1; i < fullColumns.length; i++) {
-            const col = fullColumns[i];
-            const total = totals[col];
+            const total = totals[fullColumns[i]];
             html += `<td>${total !== 0 ? total : ""}</td>`;
           }
           html += "</tr>";
@@ -291,17 +347,16 @@
       function getPaginationControls() {
         const totalPages = Math.ceil(fullData.length / rowsPerPage);
         if (totalPages <= 1) return "";
-
-        let controls = `<div style="margin-top:10px;">`;
-        controls += `<button onclick="prevPage()" ${
-          currentPage === 1 ? "disabled" : ""
-        }>Prev</button> `;
-        controls += `Page ${currentPage} of ${totalPages} `;
-        controls += `<button onclick="nextPage()" ${
-          currentPage === totalPages ? "disabled" : ""
-        }>Next</button>`;
-        controls += `</div>`;
-        return controls;
+        return `
+          <div style="margin-top:10px;">
+            <button onclick="prevPage()" ${
+              currentPage === 1 ? "disabled" : ""
+            }>Prev</button>
+            Page ${currentPage} of ${totalPages}
+            <button onclick="nextPage()" ${
+              currentPage === totalPages ? "disabled" : ""
+            }>Next</button>
+          </div>`;
       }
 
       window.prevPage = () => {
@@ -324,6 +379,7 @@
           vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs",
         },
       });
+
       require(["vs/editor/editor.main"], function () {
         editor = monaco.editor.create(document.getElementById("editor"), {
           value: "SELECT * FROM my_table;",
@@ -331,6 +387,35 @@
           theme: "vs-light",
           automaticLayout: true,
         });
+
+        notesEditor = monaco.editor.create(
+          document.getElementById("notesEditor"),
+          {
+            value:
+              localStorage.getItem("duckdb_notes") ||
+              "// Write your notes here...",
+            language: "plaintext",
+            theme: "vs-light",
+            automaticLayout: true,
+          }
+        );
+
+        let notesSaveTimeout;
+        notesEditor.onDidChangeModelContent(() => {
+          clearTimeout(notesSaveTimeout);
+          notesSaveTimeout = setTimeout(() => {
+            localStorage.setItem("duckdb_notes", notesEditor.getValue());
+          }, 500);
+        });
+
+        document
+          .getElementById("clearNotesBtn")
+          .addEventListener("click", () => {
+            if (confirm("Are you sure you want to clear your notes?")) {
+              notesEditor.setValue("// Write your notes here...");
+              localStorage.removeItem("duckdb_notes");
+            }
+          });
       });
     </script>
   </body>
