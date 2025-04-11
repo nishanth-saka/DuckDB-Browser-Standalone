@@ -135,10 +135,6 @@
         if (!query) return;
 
         for (const [table, cols] of Object.entries(currentSchema.tables)) {
-          // if (table.toLowerCase().includes(query)) {
-          //   const item = createSearchResultItem(table, "Table");
-          //   searchResultsList.appendChild(item);
-          // }
           cols.forEach((col) => {
             if (col.toLowerCase().includes(query)) {
               const item = createSearchResultItem(`${table}.${col}`, "Column");
@@ -376,7 +372,7 @@
             if (typeof cell === "string") {
               cell = cell.length > 18 ? cell.slice(0, 18) + "…" : cell;
             } else {
-              cell = parseFloat(cell).toFixed(0)
+              cell = parseFloat(cell).toFixed(0);
             }
             html += `<td>${cell ?? ""}</td>`;
           }
@@ -403,6 +399,12 @@
 
         html += "</tbody></table>";
         html += getPaginationControls();
+        html += `
+  <div style="margin-top: 10px;">
+    <button onclick="exportCSV()">Export CSV</button>
+  </div>
+`;
+
         output.innerHTML = `<div class="table-scroll">${html}</div>`;
       }
 
@@ -421,6 +423,30 @@
           </div>`;
       }
 
+      window.exportCSV = () => {
+        if (!fullData.length) return;
+
+        const csvRows = [];
+        csvRows.push(fullColumns.join(","));
+        for (const row of fullData) {
+          const values = fullColumns.map((col) => {
+            const val = row[col];
+            return typeof val === "string"
+              ? `"${val.replace(/"/g, '""')}"`
+              : val;
+          });
+          csvRows.push(values.join(","));
+        }
+
+        const blob = new Blob([csvRows.join("\n")], { type: "text/csv" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "query_results.csv";
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+      
       window.prevPage = () => {
         if (currentPage > 1) {
           currentPage--;
