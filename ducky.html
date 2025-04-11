@@ -18,6 +18,20 @@
       #mainPanel {
         flex: 1;
       }
+      #searchSchemaInput {
+        padding: 0.4rem;
+        font-size: 0.9rem;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+
+      #searchResultsList {
+        list-style: none;
+        padding-left: 0;
+        font-size: 0.85rem;
+        color: #333;
+      }
+
       #editor {
         height: 150px;
         border: 1px solid #ccc;
@@ -75,6 +89,16 @@
       <ul id="tablesList">
         No tables loaded.
       </ul>
+      <input
+        type="text"
+        id="searchSchemaInput"
+        placeholder="Search tables/columns..."
+        style="width: 100%; margin-bottom: 0.5rem"
+      />
+      <ul
+        id="searchResultsList"
+        style="max-height: 200px; overflow-y: auto"
+      ></ul>
       <h3 style="margin-top: 2rem">Notes</h3>
       <div id="notesEditor"></div>
       <button id="clearNotesBtn">Clear Notes</button>
@@ -100,6 +124,52 @@
       const tablesList = document.getElementById("tablesList");
       let editor, notesEditor, conn;
       let currentSchema = { tables: {}, keywords: [] };
+
+      const searchInput = document.getElementById("searchSchemaInput");
+      const searchResultsList = document.getElementById("searchResultsList");
+
+      searchInput.addEventListener("input", () => {
+        const query = searchInput.value.toLowerCase();
+        searchResultsList.innerHTML = "";
+
+        if (!query) return;
+
+        for (const [table, cols] of Object.entries(currentSchema.tables)) {
+          // if (table.toLowerCase().includes(query)) {
+          //   const item = createSearchResultItem(table, "Table");
+          //   searchResultsList.appendChild(item);
+          // }
+          cols.forEach((col) => {
+            if (col.toLowerCase().includes(query)) {
+              const item = createSearchResultItem(`${table}.${col}`, "Column");
+              searchResultsList.appendChild(item);
+            }
+          });
+        }
+      });
+
+      function createSearchResultItem(label, type) {
+        const li = document.createElement("li");
+        li.textContent = `${label} (${type})`;
+        li.className = "table-item";
+        li.title = "Click to copy";
+
+        li.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(label);
+            li.style.color = "green";
+            li.textContent = `Copied: ${label}`;
+            setTimeout(() => {
+              li.style.color = "";
+              li.textContent = `${label} (${type})`;
+            }, 1200);
+          } catch (err) {
+            console.error("Copy failed", err);
+          }
+        });
+
+        return li;
+      }
 
       const keywords = [
         "SELECT",
@@ -192,22 +262,6 @@
           const li = document.createElement("li");
           li.classList.add("table-item");
           li.textContent = table;
-          // li.addEventListener("click", async () => {
-          //   const schema = await conn.query(`PRAGMA table_info('${table}');`);
-          //   const fields = schema.toArray();
-          //   const cols = fields.map((f) => `${f.name} (${f.type})`).join("<br>");
-          //   li.innerHTML = `<strong>${table}</strong><div class="schema-details">${cols}</div>`;
-          //   const sqlSnippet = `SELECT * FROM ${table} LIMIT 100;`;
-          //   try {
-          //     await navigator.clipboard.writeText(sqlSnippet);
-          //     li.innerHTML += `<div class="schema-details" style="color: green;">Copied to clipboard</div>`;
-          //     setTimeout(() => {
-          //       li.querySelectorAll(".schema-details")[1]?.remove();
-          //     }, 1500);
-          //   } catch (err) {
-          //     alert("Failed to copy SQL snippet.");
-          //   }
-          // });
 
           li.addEventListener("click", async () => {
             const existingDetails = li.querySelector(".schema-details");
@@ -278,6 +332,7 @@
           const result = await conn.query(query);
           const data = result.toArray();
           const cols = result.schema.fields.map((f) => f.name);
+          console.warn(result.schema.fields);
           renderTable(data, cols);
           appendQueryToNotes(query);
           await updateSchemaCache();
@@ -317,7 +372,11 @@
         for (const row of pagedRows) {
           html += "<tr>";
           for (const col of fullColumns) {
-            html += `<td>${row[col] ?? ""}</td>`;
+            let cell = row[col];
+            if (typeof cell === "string") {
+              cell = cell.length > 18 ? cell.slice(0, 18) + "…" : cell;
+            }
+            html += `<td>${cell ?? ""}</td>`;
           }
           html += "</tr>";
         }
