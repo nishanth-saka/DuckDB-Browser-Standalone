@@ -46,6 +46,28 @@
         overflow-x: auto;
         margin-top: 1rem;
       }
+      .tabulator-paginator,
+      .tabulator-footer .tabulator-page-size {
+        justify-content: flex-start !important;
+        float: none !important;
+        text-align: left !important;
+      }
+
+      .tabulator-footer {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-start !important;
+        gap: 1rem;
+        align-items: center;
+      }
+
+      .tabulator-page-size label,
+      .tabulator-page-size select {
+        margin-right: 10px;
+      }
+      .tabulator .tabulator-footer .tabulator-paginator {
+        float: none !important;
+      }
       table {
         width: max-content;
         border-collapse: collapse;
@@ -82,6 +104,14 @@
         margin: 0.2rem 0;
       }
     </style>
+    <!-- Tabulator CSS -->
+    <link
+      href="https://unpkg.com/tabulator-tables@5.5.2/dist/css/tabulator.min.css"
+      rel="stylesheet"
+    />
+
+    <!-- Tabulator JS -->
+    <script src="https://unpkg.com/tabulator-tables@5.5.2/dist/js/tabulator.min.js"></script>
   </head>
   <body>
     <div id="leftPanel">
@@ -99,9 +129,6 @@
         id="searchResultsList"
         style="max-height: 200px; overflow-y: auto"
       ></ul>
-      <h3 style="margin-top: 2rem">Notes</h3>
-      <div id="notesEditor"></div>
-      <button id="clearNotesBtn">Clear Notes</button>
     </div>
 
     <div id="mainPanel">
@@ -111,13 +138,20 @@
       <div id="editor"></div>
       <button id="runBtn">Run Query</button>
       <div id="output">No data yet.</div>
+      <div id="tabulatorOutput" style="margin-top: 1rem"></div>
+      <div style="margin-top: 10px">
+        <button onclick="exportCSV()">Export CSV</button>
+      </div>
+      <h3 style="margin-top: 2rem">Notes</h3>
+      <div id="notesEditor"></div>
+      <button id="clearNotesBtn">Clear Notes</button>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
     <script type="module">
       import * as duckdbduckdbWasm from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.28.1-dev106.0/+esm";
       window.duckdbduckdbWasm = duckdbduckdbWasm;
-
+      let tabulator = null;
       const csvInput = document.getElementById("csvInput");
       const runBtn = document.getElementById("runBtn");
       const output = document.getElementById("output");
@@ -157,7 +191,7 @@
             li.textContent = `Copied: ${label}`;
             setTimeout(() => {
               li.style.color = "";
-              li.textContent = `${label} (${type})`;
+              li.textContent = `${label}`;
             }, 1200);
           } catch (err) {
             console.error("Copy failed", err);
@@ -328,8 +362,7 @@
           const result = await conn.query(query);
           const data = result.toArray();
           const cols = result.schema.fields.map((f) => f.name);
-          console.warn(result.schema.fields);
-          renderTable(data, cols);
+          renderTableWithTabulator(data, cols);
           appendQueryToNotes(query);
           await updateSchemaCache();
           refreshTables();
@@ -345,67 +378,26 @@
         localStorage.setItem("duckdb_notes", noteContent);
       }
 
-      let currentPage = 1;
-      const rowsPerPage = 10;
-      let fullData = [],
-        fullColumns = [];
+      function renderTableWithTabulator(rows, columns) {
+        const tableData = rows;
+        const tableColumns = columns.map((col) => ({
+          title: col,
+          field: col,
+          headerFilter: "input", // Add filter for each column
+        }));
 
-      function renderTable(rows, columns) {
-        fullData = rows;
-        fullColumns = columns;
-        currentPage = 1;
-        renderPaginatedTable();
-      }
+        tabulator = new Tabulator("#tabulatorOutput", {
+          data: tableData,
+          columns: tableColumns,
+          layout: "fitColumns",
+          pagination: "local",
+          paginationSize: 10,
+          movableColumns: true,
+          resizableRows: true,
+          autoColumns: false,
+        });
 
-      function renderPaginatedTable() {
-        const startIdx = (currentPage - 1) * rowsPerPage;
-        const pagedRows = fullData.slice(startIdx, startIdx + rowsPerPage);
-
-        let html = "<table><thead><tr>";
-        for (const col of fullColumns) html += `<th>${col}</th>`;
-        html += "</tr></thead><tbody>";
-
-        for (const row of pagedRows) {
-          html += "<tr>";
-          for (const col of fullColumns) {
-            let cell = row[col];
-            if (typeof cell === "string") {
-              cell = cell.length > 18 ? cell.slice(0, 18) + "…" : cell;
-            } else {
-              cell = parseFloat(cell).toFixed(0);
-            }
-            html += `<td>${cell ?? ""}</td>`;
-          }
-          html += "</tr>";
-        }
-
-        if (fullData.length > 1) {
-          const totals = {};
-          for (const col of fullColumns) {
-            totals[col] = fullData.reduce((sum, row) => {
-              const val = parseFloat(row[col]);
-              return !isNaN(val) ? sum + val : sum;
-            }, 0);
-          }
-
-          html +=
-            "<tr style='font-weight:bold; background:#f9f9f9'><td>Total</td>";
-          for (let i = 1; i < fullColumns.length; i++) {
-            const total = totals[fullColumns[i]];
-            html += `<td>${total !== 0 ? total.toFixed(0) : ""}</td>`;
-          }
-          html += "</tr>";
-        }
-
-        html += "</tbody></table>";
-        html += getPaginationControls();
-        html += `
-  <div style="margin-top: 10px;">
-    <button onclick="exportCSV()">Export CSV</button>
-  </div>
-`;
-
-        output.innerHTML = `<div class="table-scroll">${html}</div>`;
+        output.outerHTML = ``;
       }
 
       function getPaginationControls() {
@@ -424,29 +416,10 @@
       }
 
       window.exportCSV = () => {
-        if (!fullData.length) return;
-
-        const csvRows = [];
-        csvRows.push(fullColumns.join(","));
-        for (const row of fullData) {
-          const values = fullColumns.map((col) => {
-            const val = row[col];
-            return typeof val === "string"
-              ? `"${val.replace(/"/g, '""')}"`
-              : val;
-          });
-          csvRows.push(values.join(","));
-        }
-
-        const blob = new Blob([csvRows.join("\n")], { type: "text/csv" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "query_results.csv";
-        a.click();
-        URL.revokeObjectURL(url);
+        if (!tabulator) return;
+        tabulator.download("csv", "tabulator_export.csv");
       };
-      
+
       window.prevPage = () => {
         if (currentPage > 1) {
           currentPage--;
