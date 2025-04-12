@@ -378,13 +378,45 @@
         localStorage.setItem("duckdb_notes", noteContent);
       }
 
-      function renderTableWithTabulator(rows, columns) {
+      async function renderTableWithTabulator(rows, columns) {
         const tableData = rows;
-        const tableColumns = columns.map((col) => ({
-          title: col,
-          field: col,
-          headerFilter: "input", // Add filter for each column
-        }));
+        // const tableColumns = columns.map((col) => ({
+        //   title: col,
+        //   field: col,
+        //   headerFilter: "input", // Add filter for each column
+        // }));
+        const query = editor.getValue();
+        if (!conn || !query) return;
+        const result = await conn.query(query);
+        const data = result.toArray();
+        const tableColumns = result.schema.fields.map((field) => {
+          let sorter = "string";
+          if (
+            [
+              "INT32",
+              "INT64",
+              "INTEGER",
+              "BIGINT",
+              "SMALLINT",
+              "TINYINT",
+            ].includes(field.type)
+          ) {
+            sorter = "number";
+          } else if (
+            ["DOUBLE", "FLOAT", "REAL", "DECIMAL"].includes(field.type)
+          ) {
+            sorter = "number";
+          } else if (["BOOLEAN"].includes(field.type)) {
+            sorter = "boolean";
+          }
+
+          return {
+            title: field.name,
+            field: field.name,
+            sorter,
+            headerFilter: "input",
+          };
+        });
 
         tabulator = new Tabulator("#tabulatorOutput", {
           data: tableData,
