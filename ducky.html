@@ -380,11 +380,6 @@
 
       async function renderTableWithTabulator(rows, columns) {
         const tableData = rows;
-        // const tableColumns = columns.map((col) => ({
-        //   title: col,
-        //   field: col,
-        //   headerFilter: "input", // Add filter for each column
-        // }));
         const query = editor.getValue();
         if (!conn || !query) return;
         const result = await conn.query(query);
