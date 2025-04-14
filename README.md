@@ -1,6 +1,6 @@
 # Duckly LOCAL - a Browser-based DuckDB-WASM + HTML App
 
-"Duckly - LOCAL" offers a comprehensive in-browser SQL environment powered by DuckDB-Wasm and Monaco Editor. It facilitates quick data analysis without the need for backend infrastructure, making it a valuable tool for data enthusiasts and professionals alike.​
+"Duckly - LOCAL" offers an in-browser SQL environment powered by DuckDB-Wasm and Monaco Editor. It facilitates quick data analysis without the need for backend infrastructure, making it a valuable tool for data enthusiasts and professionals alike.​
 
 https://github.com/user-attachments/assets/77030584-7c7d-4558-a483-d131a8c90e5d
 
