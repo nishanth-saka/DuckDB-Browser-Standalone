@@ -2,7 +2,6 @@
 
 "Duckly - LOCAL" offers a comprehensive in-browser SQL environment powered by DuckDB-Wasm and Monaco Editor. It facilitates quick data analysis without the need for backend infrastructure, making it a valuable tool for data enthusiasts and professionals alike.​
 
-Key Features:
 **DuckDB-Wasm Integration:** Uses the latest web version (@duckdb/duckdb-wasm) with in-browser CSV loading.
 
 **Schema Explorer:** Lists tables and lets you click to see schema details + copy SQL snippets.
